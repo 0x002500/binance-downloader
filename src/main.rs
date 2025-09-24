@@ -4,6 +4,8 @@ use reqwest::blocking::Client;
 use serde::Deserialize;
 use std::error::Error;
 use std::fs::File;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::thread;
 use std::time::{Duration, Instant};
 
 // Define a struct to hold the Kline data with serde for JSON deserialization
@@ -76,16 +78,17 @@ fn get_interval_milliseconds(interval: &str) -> Option<i64> {
     }
 }
 
-/// Fetches all Klines for a given range, with a progress bar.
+/// Fetches all Klines for a given range and sends them to a sender.
 fn get_all_klines_in_range(
     symbol: &str,
     interval: &str,
     start_date_str: &str,
     end_date_str: &str,
-) -> Result<Vec<Kline>, Box<dyn Error>> {
+    sender: Sender<Kline>,
+) -> Result<(), Box<dyn Error>> {
     let client = Client::new();
-    let base_url = "https://data-api.binance.vision/api/v3/klines";
-    let mut all_klines: Vec<Kline> = Vec::new();
+    let base_url = "https://api.binance.com/api/v3/klines";
+    let mut total_klines_count = 0;
 
     // Convert date strings to UTC timestamps (milliseconds)
     let start_timestamp = Utc
@@ -131,13 +134,12 @@ fn get_all_klines_in_range(
             let klines_data: Vec<KlineData> = response.json()?;
 
             if klines_data.is_empty() {
-                break; // No more data to fetch
+                break;
             }
 
             for kline in klines_data.iter() {
-                // Check if the open time is within the desired range
                 if kline.0 <= end_timestamp as f64 {
-                    all_klines.push(Kline {
+                    sender.send(Kline {
                         open_time: Utc
                             .timestamp_millis_opt(kline.0 as i64)
                             .unwrap()
@@ -156,11 +158,12 @@ fn get_all_klines_in_range(
                         taker_buy_base_asset_volume: kline.9.clone(),
                         taker_buy_quote_asset_volume: kline.10.clone(),
                         ignore: kline.11.clone(),
-                    });
+                    })?;
+                    total_klines_count += 1;
                 }
             }
 
-            pb.set_position(all_klines.len() as u64);
+            pb.set_position(total_klines_count as u64);
 
             let last_kline_open_time = klines_data.last().unwrap().0 as i64;
             if last_kline_open_time >= end_timestamp {
@@ -168,7 +171,6 @@ fn get_all_klines_in_range(
             }
             current_start_time = last_kline_open_time + 1;
 
-            // Enforce rate limiting to avoid exceeding API limits
             let elapsed_time = start_request_time.elapsed();
             if elapsed_time < Duration::from_secs(1) {
                 std::thread::sleep(Duration::from_secs(1) - elapsed_time);
@@ -179,22 +181,17 @@ fn get_all_klines_in_range(
     }
 
     pb.finish_with_message("Download complete.");
-    Ok(all_klines)
+    Ok(())
 }
 
 /// Saves the vector of Klines to a CSV file.
 fn save_to_csv(
-    klines: Vec<Kline>,
+    receiver: Receiver<Kline>,
     symbol: &str,
     interval: &str,
     start_date_str: &str,
     end_date_str: &str,
 ) -> Result<(), Box<dyn Error>> {
-    if klines.is_empty() {
-        println!("\n没有可保存的数据。");
-        return Ok(());
-    }
-
     let file_name = format!(
         "{}_{}_{}_to_{}.csv",
         symbol, interval, start_date_str, end_date_str
@@ -202,7 +199,23 @@ fn save_to_csv(
     let file = File::create(&file_name)?;
     let mut wtr = csv::Writer::from_writer(file);
 
-    for kline in klines {
+    // Write header
+    wtr.write_record(&[
+        "Open Time",
+        "Open",
+        "High",
+        "Low",
+        "Close",
+        "Volume",
+        "Close Time",
+        "Quote Asset Volume",
+        "Number of Trades",
+        "Taker Buy Base Asset Volume",
+        "Taker Buy Quote Asset Volume",
+        "Ignore",
+    ])?;
+
+    for kline in receiver {
         wtr.serialize(kline)?;
     }
 
@@ -213,7 +226,7 @@ fn save_to_csv(
 
 fn main() {
     let symbol = "BTCUSDT";
-    let interval = "1m";
+    let interval = "1d";
     let start_date = "2018-01-01";
     let end_date = "2024-12-31";
 
@@ -222,14 +235,20 @@ fn main() {
         symbol, start_date, end_date
     );
 
-    match get_all_klines_in_range(symbol, interval, start_date, end_date) {
-        Ok(klines) => {
-            if let Err(e) = save_to_csv(klines, symbol, interval, start_date, end_date) {
-                eprintln!("保存CSV文件时发生错误: {}", e);
-            }
+    let (sender, receiver) = channel();
+
+    // Spawn a thread for writing to the CSV file
+    let writer_handle = thread::spawn(move || {
+        if let Err(e) = save_to_csv(receiver, symbol, interval, start_date, end_date) {
+            eprintln!("保存CSV文件时发生错误: {}", e);
         }
-        Err(e) => {
-            eprintln!("获取K线数据时发生错误: {}", e);
-        }
+    });
+
+    // Main thread handles downloading and sending data
+    if let Err(e) = get_all_klines_in_range(symbol, interval, start_date, end_date, sender) {
+        eprintln!("获取K线数据时发生错误: {}", e);
     }
+
+    // Wait for the writer thread to finish
+    writer_handle.join().expect("Writer thread failed");
 }
