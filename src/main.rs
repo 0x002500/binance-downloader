@@ -87,7 +87,7 @@ fn get_all_klines_in_range(
     sender: Sender<Kline>,
 ) -> Result<(), Box<dyn Error>> {
     let client = Client::new();
-    let base_url = "https://api.binance.com/api/v3/klines";
+    let base_url = "https://data-api.binance.vision/api/v3/klines";
     let mut total_klines_count = 0;
 
     // Convert date strings to UTC timestamps (milliseconds)
