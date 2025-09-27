@@ -3,14 +3,14 @@ use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use std::error::Error;
-use std::fs::File;
-use std::io::BufWriter;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod save_to_csv;
+
 // Define a struct to hold the Kline data with serde for JSON deserialization
-// We use a Vec<serde_json::Value> here to handle the dynamic nature of the API's array response.
+// use a Vec<serde_json::Value> here to handle the dynamic nature of the API's array response.
 #[derive(Debug, Deserialize)]
 struct KlineData(
     f64,    // Open time
@@ -199,53 +199,6 @@ fn get_all_klines_in_range(
     Ok(())
 }
 
-/// Saves the vector of Klines to a CSV file.
-fn save_to_csv(
-    receiver: Receiver<Vec<Kline>>, // CHANGED: Receive batches (Vec<Kline>)
-    symbol: &str,
-    interval: &str,
-    start_date_str: &str,
-    end_date_str: &str,
-) -> Result<(), Box<dyn Error>> {
-    let file_name = format!(
-        "{}_{}_{}_to_{}.csv",
-        symbol, interval, start_date_str, end_date_str
-    );
-    let file = File::create(&file_name)?;
-
-    // Use BufWriter to buffer disk writes, reducing system calls.
-    let buffered_writer = BufWriter::new(file);
-    let mut wtr = csv::Writer::from_writer(buffered_writer);
-
-    // Write header
-    wtr.write_record(&[
-        "Open Time",
-        "Open",
-        "High",
-        "Low",
-        "Close",
-        "Volume",
-        "Close Time",
-        "Quote Asset Volume",
-        "Number of Trades",
-        "Taker Buy Base Asset Volume",
-        "Taker Buy Quote Asset Volume",
-        "Ignore",
-    ])?;
-
-    // Receive batches and serialize all records within each batch
-    for kline_batch in receiver {
-        for kline in kline_batch {
-            wtr.serialize(kline)?;
-        }
-    }
-
-    // Flush the BufWriter and CSV Writer to ensure all data is written to disk
-    wtr.flush()?;
-    println!("\n数据已成功保存到文件: {}", file_name);
-    Ok(())
-}
-
 fn main() {
     let symbol = "BTCUSDT";
     let interval = "1d";
@@ -262,7 +215,7 @@ fn main() {
 
     // Spawn a thread for writing to the CSV file
     let writer_handle = thread::spawn(move || {
-        if let Err(e) = save_to_csv(receiver, symbol, interval, start_date, end_date) {
+        if let Err(e) = save_to_csv::save_to_csv(receiver, symbol, interval, start_date, end_date) {
             eprintln!("保存CSV文件时发生错误: {}", e);
         }
     });
