@@ -4,6 +4,7 @@ use reqwest::blocking::Client;
 use serde::Deserialize;
 use std::error::Error;
 use std::fs::File;
+use std::io::BufWriter;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -78,13 +79,13 @@ fn get_interval_milliseconds(interval: &str) -> Option<i64> {
     }
 }
 
-/// Fetches all Klines for a given range and sends them to a sender.
+/// Fetches all Klines for a given range and sends them to a sender in batches.
 fn get_all_klines_in_range(
     symbol: &str,
     interval: &str,
     start_date_str: &str,
     end_date_str: &str,
-    sender: Sender<Kline>,
+    sender: Sender<Vec<Kline>>, // Send batches (Vec<Kline>) for less channel overhead
 ) -> Result<(), Box<dyn Error>> {
     let client = Client::new();
     let base_url = "https://data-api.binance.vision/api/v3/klines";
@@ -117,6 +118,7 @@ fn get_all_klines_in_range(
     pb.set_message("Downloading Klines");
 
     let mut current_start_time = start_timestamp;
+    let mut kline_buffer: Vec<Kline> = Vec::with_capacity(1000); // Buffer for batching Klines
 
     while current_start_time <= end_timestamp {
         let params = [
@@ -139,7 +141,8 @@ fn get_all_klines_in_range(
 
             for kline in klines_data.iter() {
                 if kline.0 <= end_timestamp as f64 {
-                    sender.send(Kline {
+                    // Collect Kline into the buffer
+                    kline_buffer.push(Kline {
                         open_time: Utc
                             .timestamp_millis_opt(kline.0 as i64)
                             .unwrap()
@@ -158,8 +161,14 @@ fn get_all_klines_in_range(
                         taker_buy_base_asset_volume: kline.9.clone(),
                         taker_buy_quote_asset_volume: kline.10.clone(),
                         ignore: kline.11.clone(),
-                    })?;
+                    });
                     total_klines_count += 1;
+
+                    // Send the batch if the buffer is full (1000 klines)
+                    if kline_buffer.len() == 1000 {
+                        sender.send(kline_buffer)?;
+                        kline_buffer = Vec::with_capacity(1000); // Create a new buffer
+                    }
                 }
             }
 
@@ -172,6 +181,7 @@ fn get_all_klines_in_range(
             current_start_time = last_kline_open_time + 1;
 
             let elapsed_time = start_request_time.elapsed();
+            // Respect API rate limit: wait 1 second between requests (already present, unchanged)
             if elapsed_time < Duration::from_secs(1) {
                 std::thread::sleep(Duration::from_secs(1) - elapsed_time);
             }
@@ -180,13 +190,18 @@ fn get_all_klines_in_range(
         }
     }
 
+    // Send any remaining data in the buffer
+    if !kline_buffer.is_empty() {
+        sender.send(kline_buffer)?;
+    }
+
     pb.finish_with_message("Download complete.");
     Ok(())
 }
 
 /// Saves the vector of Klines to a CSV file.
 fn save_to_csv(
-    receiver: Receiver<Kline>,
+    receiver: Receiver<Vec<Kline>>, // CHANGED: Receive batches (Vec<Kline>)
     symbol: &str,
     interval: &str,
     start_date_str: &str,
@@ -197,7 +212,10 @@ fn save_to_csv(
         symbol, interval, start_date_str, end_date_str
     );
     let file = File::create(&file_name)?;
-    let mut wtr = csv::Writer::from_writer(file);
+
+    // Use BufWriter to buffer disk writes, reducing system calls.
+    let buffered_writer = BufWriter::new(file);
+    let mut wtr = csv::Writer::from_writer(buffered_writer);
 
     // Write header
     wtr.write_record(&[
@@ -215,10 +233,14 @@ fn save_to_csv(
         "Ignore",
     ])?;
 
-    for kline in receiver {
-        wtr.serialize(kline)?;
+    // Receive batches and serialize all records within each batch
+    for kline_batch in receiver {
+        for kline in kline_batch {
+            wtr.serialize(kline)?;
+        }
     }
 
+    // Flush the BufWriter and CSV Writer to ensure all data is written to disk
     wtr.flush()?;
     println!("\n数据已成功保存到文件: {}", file_name);
     Ok(())
@@ -235,7 +257,8 @@ fn main() {
         symbol, start_date, end_date
     );
 
-    let (sender, receiver) = channel();
+    // CHANGED: Channel now sends/receives Vec<Kline>
+    let (sender, receiver): (Sender<Vec<Kline>>, Receiver<Vec<Kline>>) = channel();
 
     // Spawn a thread for writing to the CSV file
     let writer_handle = thread::spawn(move || {
