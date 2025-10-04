@@ -2,7 +2,7 @@ use serde::Serialize;
 
 // Struct for writing to CSV
 #[derive(Debug, Serialize)]
-struct Kline {
+pub struct Kline {
     #[serde(rename = "Open Time")]
     open_time: String,
     #[serde(rename = "Open")]
