@@ -9,7 +9,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  MY_BIN_NAME: "your_project_name"
+  MY_BIN_NAME: "binance-downloader"
 
 jobs:
   build_and_release:
