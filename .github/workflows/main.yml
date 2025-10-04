@@ -1,0 +1,91 @@
+name: Cross-platform Release Build
+
+on:
+  release:
+    types: [created]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  MY_BIN_NAME: "binance-downloader"
+
+jobs:
+  build_and_release:
+    name: Build ${{ matrix.target }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive_ext: tar.gz
+            bin_ext: ""
+            name_suffix: linux-x64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive_ext: zip
+            bin_ext: .exe
+            name_suffix: windows-x64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive_ext: tar.gz
+            bin_ext: ""
+            name_suffix: macos-x64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive_ext: tar.gz
+            bin_ext: ""
+            name_suffix: macos-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+
+      - name: Build Release
+        run: cargo build --verbose --release --target ${{ matrix.target }}
+
+      - name: Set Asset Variables
+        id: set_asset_vars
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            BIN_PATH="target/${{ matrix.target }}/release/${{ env.MY_BIN_NAME }}${{ matrix.bin_ext }}"
+          else
+            BIN_PATH="target/${{ matrix.target }}/release/${{ env.MY_BIN_NAME }}"
+          fi
+          
+          ASSET_NAME="${{ env.MY_BIN_NAME }}-${VERSION}-${{ matrix.name_suffix }}.${{ matrix.archive_ext }}"
+          
+          echo "BIN_PATH=$BIN_PATH" >> $GITHUB_OUTPUT
+          echo "ASSET_NAME=$ASSET_NAME" >> $GITHUB_OUTPUT
+
+      - name: Archive Linux/macOS Asset
+        if: ${{ runner.os != 'Windows' }}
+        run: |
+          mkdir -p ${{ env.MY_BIN_NAME }}-${{ matrix.name_suffix }}
+          mv ${{ steps.set_asset_vars.outputs.BIN_PATH }} ${{ env.MY_BIN_NAME }}-${{ matrix.name_suffix }}/
+          tar czf ${{ steps.set_asset_vars.outputs.ASSET_NAME }} ${{ env.MY_BIN_NAME }}-${{ matrix.name_suffix }}/
+      
+      - name: Archive Windows Asset
+        if: ${{ runner.os == 'Windows' }}
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ env.MY_BIN_NAME }}-${{ matrix.name_suffix }}"
+          Move-Item -Path "${{ steps.set_asset_vars.outputs.BIN_PATH }}" -Destination "${{ env.MY_BIN_NAME }}-${{ matrix.name_suffix }}"
+          Compress-Archive -Path "${{ env.MY_BIN_NAME }}-${{ matrix.name_suffix }}" -DestinationPath "${{ steps.set_asset_vars.outputs.ASSET_NAME }}"
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.set_asset_vars.outputs.ASSET_NAME }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
