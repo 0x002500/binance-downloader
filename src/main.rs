@@ -1,60 +1,17 @@
 use chrono::{NaiveDate, TimeZone, Utc};
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::blocking::Client;
-use serde::Deserialize;
 use std::error::Error;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::time::{Duration, Instant};
 
 mod save_to_csv;
+mod structs;
 
-// Define a struct to hold the Kline data with serde for JSON deserialization
-// use a Vec<serde_json::Value> here to handle the dynamic nature of the API's array response.
-#[derive(Debug, Deserialize)]
-struct KlineData(
-    f64,    // Open time
-    String, // Open price
-    String, // High price
-    String, // Low price
-    String, // Close price
-    String, // Volume
-    f64,    // Close time
-    String, // Quote asset volume
-    i64,    // Number of trades
-    String, // Taker buy base asset volume
-    String, // Taker buy quote asset volume
-    String, // Ignore
-);
+use crate::structs::{Kline, KlineData};
 
-// Struct for writing to CSV
-#[derive(Debug, serde::Serialize)]
-struct Kline {
-    #[serde(rename = "Open Time")]
-    open_time: String,
-    #[serde(rename = "Open")]
-    open: String,
-    #[serde(rename = "High")]
-    high: String,
-    #[serde(rename = "Low")]
-    low: String,
-    #[serde(rename = "Close")]
-    close: String,
-    #[serde(rename = "Volume")]
-    volume: String,
-    #[serde(rename = "Close Time")]
-    close_time: String,
-    #[serde(rename = "Quote Asset Volume")]
-    quote_asset_volume: String,
-    #[serde(rename = "Number of Trades")]
-    number_of_trades: i64,
-    #[serde(rename = "Taker Buy Base Asset Volume")]
-    taker_buy_base_asset_volume: String,
-    #[serde(rename = "Taker Buy Quote Asset Volume")]
-    taker_buy_quote_asset_volume: String,
-    #[serde(rename = "Ignore")]
-    ignore: String,
-}
+
 
 /// Helper function to convert an interval string to milliseconds.
 fn get_interval_milliseconds(interval: &str) -> Option<i64> {
