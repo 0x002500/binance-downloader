@@ -1,9 +1,8 @@
 name: Cross-platform Release Build
 
 on:
-  push:
-    tags:
-      - 'v[0-9]+.*'
+  release:
+    types: [published]
 
 permissions:
   contents: write
