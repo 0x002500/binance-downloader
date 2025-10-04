@@ -181,7 +181,7 @@ fn get_all_klines_in_range(
             current_start_time = last_kline_open_time + 1;
 
             let elapsed_time = start_request_time.elapsed();
-            // Respect API rate limit: wait 1 second between requests (already present, unchanged)
+            // Respect API rate limit: wait 1 second between requests
             if elapsed_time < Duration::from_secs(1) {
                 std::thread::sleep(Duration::from_secs(1) - elapsed_time);
             }
@@ -201,7 +201,7 @@ fn get_all_klines_in_range(
 
 fn main() {
     let symbol = "BTCUSDT";
-    let interval = "1d";
+    let interval = "30m";
     let start_date = "2018-01-01";
     let end_date = "2024-12-31";
 
