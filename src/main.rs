@@ -36,7 +36,7 @@ fn get_interval_milliseconds(interval: &str) -> Option<i64> {
 }
 
 /// Fetches all Klines for a given range and sends them to a sender in batches.
-fn get_all_klines_in_range(
+fn get_all_klines(
     symbol: &str,
     interval: &str,
     start_date_str: &str,
@@ -177,7 +177,7 @@ fn main() {
     });
 
     // Main thread handles downloading and sending data
-    if let Err(e) = get_all_klines_in_range(symbol, interval, start_date, end_date, sender) {
+    if let Err(e) = get_all_klines(symbol, interval, start_date, end_date, sender) {
         eprintln!("获取K线数据时发生错误: {}", e);
     }
 
