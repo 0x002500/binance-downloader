@@ -6,12 +6,11 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::time::{Duration, Instant};
 
-mod save_to_csv;
 mod structs;
+mod utils;
 
 use crate::structs::{Kline, KlineData};
-
-
+use crate::utils::save_to_csv;
 
 /// Helper function to convert an interval string to milliseconds.
 fn get_interval_milliseconds(interval: &str) -> Option<i64> {
@@ -172,7 +171,7 @@ fn main() {
 
     // Spawn a thread for writing to the CSV file
     let writer_handle = thread::spawn(move || {
-        if let Err(e) = save_to_csv::save_to_csv(receiver, symbol, interval, start_date, end_date) {
+        if let Err(e) = save_to_csv(receiver, symbol, interval, start_date, end_date) {
             eprintln!("保存CSV文件时发生错误: {}", e);
         }
     });
